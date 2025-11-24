@@ -1,17 +1,34 @@
 import { NextResponse } from "next/server";
-import { GoogleGenAI } from "@google/genai";
+import OpenAI from "openai";
+import { promises as fs } from "fs";
+import path from "path";
 
-const DEFAULT_IMAGE_URL =
-  "https://ai.google.dev/static/gemini-api/docs/images/cat.png";
+const DEFAULT_IMAGE_PATH = path.join(process.cwd(), "public", "kameraboy.png");
 
-const apiKey = process.env.GEMINI_API_KEY ?? process.env.GOOGLE_API_KEY;
+const apiKey = process.env.OPENROUTER_API_KEY;
+
+const defaultHeaders: Record<string, string> = {};
+if (process.env.OPENROUTER_REFERER) {
+  defaultHeaders["HTTP-Referer"] = process.env.OPENROUTER_REFERER;
+}
+if (process.env.OPENROUTER_TITLE) {
+  defaultHeaders["X-Title"] = process.env.OPENROUTER_TITLE;
+}
+
+const openai = apiKey
+  ? new OpenAI({
+      apiKey,
+      baseURL: "https://openrouter.ai/api/v1",
+      defaultHeaders,
+    })
+  : null;
 
 export async function POST(request: Request) {
   if (!apiKey) {
     return NextResponse.json(
       {
         error:
-          "Server belum dikonfigurasi GEMINI_API_KEY / GOOGLE_API_KEY. Tambahkan API key ke environment terlebih dahulu.",
+          "Missing OPENROUTER_API_KEY. Add your OpenRouter key to the environment.",
       },
       { status: 500 }
     );
@@ -22,7 +39,7 @@ export async function POST(request: Request) {
     body = await request.json();
   } catch {
     return NextResponse.json(
-      { error: "Body request harus berupa JSON." },
+      { error: "Request body must be JSON." },
       { status: 400 }
     );
   }
@@ -34,86 +51,128 @@ export async function POST(request: Request) {
     typeof (body as any).prompt !== "string"
   ) {
     return NextResponse.json(
-      { error: "Field 'prompt' wajib diisi." },
+      { error: "Field 'prompt' is required." },
       { status: 400 }
     );
   }
 
-  const { prompt, imageBase64, mimeType } = body as {
-    prompt: string;
-    imageBase64?: string | null;
-    mimeType?: string | null;
-  };
+  const { prompt } = body as { prompt: string };
+  const safetyInstruction =
+    "Preserve the subject's facial identity and proportions; do not alter face shape, skin tone, or key features.";
+  const userPrompt = prompt.trim();
+  const finalPrompt = userPrompt
+    ? `${userPrompt}\n\n${safetyInstruction}`
+    : `Create a bold, playful variation of this photo. ${safetyInstruction}`;
 
-  const ai = new GoogleGenAI({ apiKey });
-
-  let effectiveBase64 = imageBase64 ?? null;
-  let effectiveMimeType = mimeType ?? null;
+  let effectiveBase64: string | null = null;
+  let effectiveMimeType: string | null = null;
 
   if (!effectiveBase64 || !effectiveMimeType) {
-    const imageResponse = await fetch(DEFAULT_IMAGE_URL);
-    if (!imageResponse.ok) {
+    try {
+      const buffer = await fs.readFile(DEFAULT_IMAGE_PATH);
+      effectiveBase64 = buffer.toString("base64");
+      effectiveMimeType = "image/png";
+    } catch {
       return NextResponse.json(
-        { error: "Gagal mengambil gambar default dari server." },
+        { error: "Failed to read default image on server." },
         { status: 500 }
       );
     }
-    const arrayBuffer = await imageResponse.arrayBuffer();
-    const buffer = Buffer.from(arrayBuffer);
-    effectiveBase64 = buffer.toString("base64");
-    effectiveMimeType =
-      imageResponse.headers.get("content-type") ?? "image/png";
+  }
+
+  if (!effectiveBase64 || !effectiveMimeType) {
+    return NextResponse.json(
+      { error: "Default image was not available on the server." },
+      { status: 500 }
+    );
   }
 
   try {
-    const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash-image",
-      contents: [
+    const completion = await openai!.chat.completions.create({
+      model: "google/gemini-2.5-flash-image",
+      messages: [
         {
-          text:
-            prompt.trim() ||
-            "Buat variasi kreatif yang menarik dari foto ini.",
-        },
-        {
-          inlineData: {
-            mimeType: effectiveMimeType,
-            data: effectiveBase64,
-          },
+          role: "user",
+          content: [
+            {
+              type: "text",
+              text: finalPrompt,
+            },
+            {
+              type: "image_url",
+              image_url: {
+                url: `data:${effectiveMimeType};base64,${effectiveBase64}`,
+              },
+            },
+          ],
         },
       ],
-      config: {
-        responseModalities: ["Image"],
-      },
     });
 
-    const candidate = response.candidates?.[0];
-    const parts = candidate?.content?.parts ?? [];
+    const choiceMessage = completion.choices?.[0]?.message as any;
+    const content = choiceMessage?.content;
+    let imageUrl: string | null = null;
 
-    let generatedBase64: string | null = null;
-
-    for (const part of parts as any[]) {
-      if (part.inlineData?.data) {
-        generatedBase64 = part.inlineData.data as string;
-        break;
+    // Prefer images array when present (OpenRouter often returns this)
+    const images = choiceMessage?.images;
+    if (Array.isArray(images) && images.length > 0) {
+      const img = images.find(
+        (item: any) => item?.type === "image_url" && item.image_url?.url
+      );
+      if (img?.image_url?.url) {
+        imageUrl = img.image_url.url as string;
       }
     }
 
-    if (!generatedBase64) {
+    // Fallback: parse data URL from content (string or array)
+    const dataUrlPattern = /data:image\/[^;]+;base64,[A-Za-z0-9+/=]+/;
+    if (!imageUrl) {
+      if (typeof content === "string") {
+        const match = dataUrlPattern.exec(content);
+        imageUrl = match ? match[0] : null;
+      } else if (Array.isArray(content)) {
+        for (const part of content as any[]) {
+          if (part?.type === "image_url" && part.image_url?.url) {
+            imageUrl = part.image_url.url as string;
+            break;
+          }
+          if (typeof part === "string") {
+            const match = dataUrlPattern.exec(part);
+            imageUrl = match ? match[0] : null;
+            if (imageUrl) break;
+          }
+        }
+      }
+    }
+
+    if (!imageUrl || !imageUrl.startsWith("data:")) {
       return NextResponse.json(
-        { error: "Tidak ada gambar yang dihasilkan dari Gemini." },
+        { error: "OpenRouter did not return an inline image URL." },
         { status: 500 }
       );
     }
 
+    const commaIndex = imageUrl.indexOf(",");
+    if (commaIndex === -1) {
+      return NextResponse.json(
+        { error: "Invalid data URL returned by OpenRouter." },
+        { status: 500 }
+      );
+    }
+
+    const meta = imageUrl.slice(5, commaIndex); // after "data:"
+    const base64 = imageUrl.slice(commaIndex + 1);
+    const mimeFromMeta = meta.split(";")[0] || "image/png";
+
     return NextResponse.json({
-      imageBase64: generatedBase64,
-      mimeType: "image/png",
+      imageBase64: base64,
+      mimeType: mimeFromMeta,
     });
   } catch (error: unknown) {
     const message =
-      error instanceof Error ? error.message : "Terjadi kesalahan tak terduga.";
+      error instanceof Error ? error.message : "Unexpected server error.";
     return NextResponse.json(
-      { error: `Gagal memproses gambar dengan Gemini: ${message}` },
+      { error: `Failed to process image with OpenRouter: ${message}` },
       { status: 500 }
     );
   }
