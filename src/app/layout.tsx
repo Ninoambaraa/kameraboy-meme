@@ -12,6 +12,9 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
+const siteUrl = "https://generator.kameraboy.xyz";
+const previewImage = `${siteUrl}/kameraboy.png`;
+
 export const metadata: Metadata = {
   title: "$KAMERABOY Meme Coin Playground",
   description:
@@ -20,11 +23,11 @@ export const metadata: Metadata = {
     title: "$KAMERABOY Meme Coin Playground",
     description:
       "Remix the Kameraboy mascot with AI prompts. Default lore-locked image, easy generate, quick download.",
-    url: "https://kameraboy.example",
+    url: siteUrl,
     siteName: "$KAMERABOY",
     images: [
       {
-        url: "https://kameraboy.example/og.png",
+        url: previewImage,
         width: 1200,
         height: 630,
         alt: "Kameraboy meme coin playground preview",
@@ -38,7 +41,7 @@ export const metadata: Metadata = {
     title: "$KAMERABOY Meme Coin Playground",
     description:
       "Remix the Kameraboy mascot with AI prompts. Default lore-locked image, easy generate, quick download.",
-    images: ["https://kameraboy.example/og.png"],
+    images: [previewImage],
   },
 };
 
