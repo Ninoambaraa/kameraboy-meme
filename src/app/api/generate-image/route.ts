@@ -44,16 +44,16 @@ export async function POST(request: Request) {
     );
   }
 
-  if (
-    typeof body !== "object" ||
-    body === null ||
-    !("prompt" in body) ||
-    typeof (body as any).prompt !== "string"
-  ) {
-    return NextResponse.json(
-      { error: "Field 'prompt' is required." },
-      { status: 400 }
-    );
+if (
+  typeof body !== "object" ||
+  body === null ||
+  !("prompt" in body) ||
+  typeof (body as { prompt?: unknown }).prompt !== "string"
+) {
+  return NextResponse.json(
+    { error: "Field 'prompt' is required." },
+    { status: 400 }
+  );
   }
 
   const { prompt } = body as { prompt: string };
@@ -109,18 +109,20 @@ export async function POST(request: Request) {
       ],
     });
 
-    const choiceMessage = completion.choices?.[0]?.message as any;
+    const choiceMessage = completion.choices?.[0]?.message;
     const content = choiceMessage?.content;
     let imageUrl: string | null = null;
 
     // Prefer images array when present (OpenRouter often returns this)
-    const images = choiceMessage?.images;
+    type ImagePart = { type?: string; image_url?: { url?: string } | null };
+    const images = (choiceMessage as { images?: ImagePart[] } | undefined)
+      ?.images;
     if (Array.isArray(images) && images.length > 0) {
       const img = images.find(
-        (item: any) => item?.type === "image_url" && item.image_url?.url
+        (item: ImagePart) => item?.type === "image_url" && item.image_url?.url
       );
       if (img?.image_url?.url) {
-        imageUrl = img.image_url.url as string;
+        imageUrl = img.image_url.url;
       }
     }
 
@@ -131,9 +133,13 @@ export async function POST(request: Request) {
         const match = dataUrlPattern.exec(content);
         imageUrl = match ? match[0] : null;
       } else if (Array.isArray(content)) {
-        for (const part of content as any[]) {
-          if (part?.type === "image_url" && part.image_url?.url) {
-            imageUrl = part.image_url.url as string;
+        for (const part of content as Array<ImagePart | string>) {
+          if (
+            typeof part === "object" &&
+            part?.type === "image_url" &&
+            part.image_url?.url
+          ) {
+            imageUrl = part.image_url.url;
             break;
           }
           if (typeof part === "string") {

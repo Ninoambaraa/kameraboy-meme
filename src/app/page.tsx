@@ -1,5 +1,7 @@
 "use client";
 
+/* eslint-disable @next/next/no-img-element */
+
 import { FormEvent, useState } from "react";
 
 const DEFAULT_IMAGE_URL = "/kameraboy.png";
