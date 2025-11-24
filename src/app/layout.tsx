@@ -14,11 +14,17 @@ const geistMono = Geist_Mono({
 
 const siteUrl = "https://generator.kameraboy.xyz";
 const previewImage = `${siteUrl}/kameraboy.png`;
+const favicon = "/kameraboy.png";
 
 export const metadata: Metadata = {
   title: "$KAMERABOY Meme Coin Playground",
   description:
     "Remix the Kameraboy mascot with AI prompts. Default lore-locked image, easy generate, quick download.",
+  icons: {
+    icon: favicon,
+    shortcut: favicon,
+    apple: favicon,
+  },
   openGraph: {
     title: "$KAMERABOY Meme Coin Playground",
     description:
